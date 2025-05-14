@@ -4,14 +4,11 @@ import {
   ChatMessage,
   SystemMessage,
 } from "@langchain/core/messages";
-import { OpenAI } from "openai";
 import c from "chalk";
 
 import dotenv from "dotenv";
 import { stringify } from "querystring";
 dotenv.config();
-
-const openai = new OpenAI();
 
 const modelSelect = [
   // Reasoning Models
