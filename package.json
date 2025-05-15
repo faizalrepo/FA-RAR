@@ -14,7 +14,9 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@langchain/core": "^0.3.51",
+    "@google/generative-ai": "^0.24.1",
+    "@langchain/core": "^0.3.55",
+    "@langchain/google-genai": "^0.2.9",
     "@langchain/ollama": "^0.2.0",
     "@langchain/openai": "^0.5.10",
     "chalk": "^5.4.1",
@@ -26,6 +28,7 @@
     "npm": "^10.9.2",
     "openai": "^4.97.0",
     "ora": "^8.2.0",
+    "pdf-to-png-converter": "^3.5.2",
     "prompt-sync": "^4.2.0",
     "zod": "^3.24.3"
   },
