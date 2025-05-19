@@ -3,192 +3,255 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 // import { GoogleGenerativeAI } from "@google/generative-ai";
 import { GoogleGenAI } from "@google/genai";
 import {
-  HumanMessage,
-  ChatMessage,
-  SystemMessage,
+    HumanMessage,
+    ChatMessage,
+    SystemMessage,
 } from "@langchain/core/messages";
 import c from "chalk";
 import fs from "fs";
 import { pdfToPng } from "pdf-to-png-converter";
+import { parse } from "json2csv";
 import dotenv from "dotenv";
 import { response } from "express";
 dotenv.config();
 
 const model = [
-  "gemma3:4b", // 0
-  "gemma3:4b-it-qat", // 1
-  "granite3.2-vision", // 2
-  "moondream", // 3
-  "hf.co/unsloth/Qwen2.5-VL-7B-Instruct-GGUF:IQ2_M", // 4
+    "gemma3:4b", // 0
+    "gemma3:4b-it-qat", // 1
+    "granite3.2-vision", // 2
+    "moondream", // 3
+    "hf.co/unsloth/Qwen2.5-VL-7B-Instruct-GGUF:IQ2_M", // 4
+    "qwen2.5vl:3b", // 5
 ];
 
-const localModel_ls = () => {
-  const convertPdfToPng = async () => {
-    const pdfFilePath = "src/vision/images/eleos_invoices.pdf";
-
-    const pngPages = await pdfToPng(pdfFilePath, {
-      viewportScale: 2.0,
-      verbosityLevel: 0,
-      outputFolder: "./output",
-      outputFileMaskFunc: (pageNumber) => `page_${pageNumber}.png`,
+const localModel_ls = async () => {
+    const llm = new ChatOllama({
+        model: model[0],
+        baseUrl: "http://127.0.0.1:11434",
+        callbacks: [
+            {
+                handleLLMNewToken(token) {
+                    process.stdout.write(token);
+                },
+            },
+        ],
     });
 
-    console.log("Conversion complete: ", pngPages);
-  };
+    const convertPdfToPng = async () => {
+        const pdfFilePath = "src/vision/images/eleos_invoices.pdf";
 
-  const convertImageToBase64 = async (filePath) => {
-    const imageBuffer = await fs.readFile(filePath);
-    return imageBuffer.toString("base64");
-  };
+        const pngPages = await pdfToPng(pdfFilePath, {
+            viewportScale: 2.0,
+            verbosityLevel: 0,
+            outputFolder: "./output",
+            outputFileMaskFunc: (pageNumber) => `page_${pageNumber}.png`,
+        });
 
-  const llm = new ChatOllama({
-    model: model[0],
-    baseUrl: "http://127.0.0.1:11434",
-    callbacks: [
-      {
-        handleLLMNewToken(token) {
-          process.stdout.write(token);
-        },
-      },
-    ],
-  });
+        console.log("Conversion complete: ", pngPages);
+    };
 
-  const createVisionPrompt = (base64Image, promptText) => {
-    return new HumanMessage({
-      content: [
+    // await convertPdfToPng();
+
+    const convertImageToBase64 = (filePath) => {
+        const imageBuffer = fs.readFileSync(filePath);
+        return imageBuffer.toString("base64");
+    };
+
+    let promptText = `Return one JSON object per image or invoice, using consistent keys in every response to support CSV conversion. Detect and apply any handwritten corrections (strikethroughs) to original values. Format all dates with '-' as the separator. If a value is missing, set it to null. Each JSON object must include: 'Primary Account', 'Name', 'SSN', 'DOB', 'Email', 'Home Phone', 'Work Phone', 'Status', and 'Balance'. Ensure only valid emails are entered under the 'Email' key, and valid phone numbers under the 'Home Phone' and 'Work Phone' keys, respectively.`;
+
+    const base64Image = convertImageToBase64(`./output/page_1.png`);
+
+    let contents = [
         {
-          type: "image_url",
-          image_url: {
-            url: `data:image/png;base64,${base64Image}`,
-            detail: "high",
-          },
+            type: "image_url",
+            image_url: {
+                url: `data:image/png;base64,${base64Image}`,
+                detail: "high",
+            },
         },
         {
-          type: "text",
-          text: promptText,
+            type: "text",
+            text: promptText,
         },
-      ],
+    ];
+
+    // const imageFiles = fs
+    //     .readdirSync("./output")
+    //     .filter((file) => file.endsWith(".png"));
+
+    // for (const filename of imageFiles) {
+    //     const imagePath = `./output/${filename}`;
+    //     const base64Image = convertImageToBase64(imagePath);
+    //     const imagePart = {
+    //         type: "image_url",
+    //         image_url: {
+    //             url: `data:image/png;base64,${base64Image}`,
+    //             detail: "high",
+    //         },
+    //     };
+    //     contents.push(imagePart);
+    // }
+
+    const hum_mess = new HumanMessage({
+        content: contents,
     });
-  };
 
-  const getVisionResponse = async () => {
-    await convertPdfToPng();
-
-    const b64image = await convertImageToBase64(
-      "src/vision/images/eleos-invoice-1.png"
-    );
-    const query = createVisionPrompt(
-      b64image,
-      "when was the first visit and the second? their birth date?"
-    );
-
-    const response = await llm.invoke([query]);
-    // console.log(response.content);
-    console.log("\n");
-  };
-
-  console.log(
-    `\nVision Model in use: ${c.magenta(llm.model.replace(/:/g, " : "))}\n`
-  );
-
-  getVisionResponse();
+    const response = await llm.invoke([hum_mess]);
 };
 
 const cloudModel_ls = async () => {
-  const vision = new ChatGoogleGenerativeAI({
-    model: "gemma3:27b-it",
-    maxOutputTokens: 2048,
-    streaming: true,
-    callbacks: [
-      {
-        handleLLMNewToken(token) {
-          process.stdout.write(token);
-        },
-      },
-    ],
-  });
-  const image = fs
-    .readFileSync("src/vision/images/eleos-invoice-1.png")
-    .toString("base64");
-  const input = [
-    new HumanMessage({
-      content: [
-        {
-          type: "text",
-          text: "when was the first visit and the second? their birth date? what was their registered date?",
-        },
-        {
-          type: "image_url",
-          image_url: {
-            url: `data:image/png;base64,${image}`,
-            detail: "high",
-          },
-        },
-      ],
-    }),
-  ];
+    const vision = new ChatGoogleGenerativeAI({
+        model: "gemma3:27b-it",
+        maxOutputTokens: 2048,
+        streaming: true,
+        callbacks: [
+            {
+                handleLLMNewToken(token) {
+                    process.stdout.write(token);
+                },
+            },
+        ],
+    });
+    const image = fs
+        .readFileSync("src/vision/images/eleos-invoice-1.png")
+        .toString("base64");
+    const input = [
+        new HumanMessage({
+            content: [
+                {
+                    type: "text",
+                    text: "when was the first visit and the second? their birth date? what was their registered date?",
+                },
+                {
+                    type: "image_url",
+                    image_url: {
+                        url: `data:image/png;base64,${image}`,
+                        detail: "high",
+                    },
+                },
+            ],
+        }),
+    ];
 
-  const res = await vision.invoke(input);
-  console.log("\n");
+    const res = await vision.invoke(input);
+    console.log("\n");
 };
 
 const cloudModel = async () => {
-  try {
-    const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+    try {
+        const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
 
-    // PDF → PNG
-    const convertPdfToPng = async () => {
-      const pdfFilePath = "src/vision/images/eleos_invoices.pdf";
+        // PDF → PNG
+        const convertPdfToPng = async () => {
+            const pdfFilePath = "src/vision/images/eleos_invoices.pdf";
 
-      const pngPages = await pdfToPng(pdfFilePath, {
-        viewportScale: 2.0,
-        verbosityLevel: 0,
-        outputFolder: "./output",
-        outputFileMaskFunc: (pageNumber) => `page_${pageNumber}.png`,
-      });
+            const pngPages = await pdfToPng(pdfFilePath, {
+                viewportScale: 2.0,
+                verbosityLevel: 0,
+                outputFolder: "./output",
+                outputFileMaskFunc: (pageNumber) => `page_${pageNumber}.png`,
+            });
 
-      console.log("Conversion complete: ", pngPages);
-    };
+            console.log("Conversion complete: ", pngPages);
+        };
 
-    // PNG → Base64
-    function encodeImageToBase64(filePath) {
-      const imageBuffer = fs.readFileSync(filePath);
-      return imageBuffer.toString("base64");
+        await convertPdfToPng();
+
+        // PNG → Base64
+        function encodeImageToBase64(filePath) {
+            const imageBuffer = fs.readFileSync(filePath);
+            return imageBuffer.toString("base64");
+        }
+
+        const system =
+            "Only respond in single object per image. Your output will be converted to CSV, so maintain consistent keys across responses. identify handwritten correction (strikes) to the original values, and apply those adjustments. The dates should be seperated by '-'. If any of the values are empty, give it null.";
+
+        const prompt = `Return one JSON object per image or invoice, using consistent keys in every response to support CSV conversion. Detect and apply any handwritten corrections (strikethroughs) to original values. Format all dates with '-' as the separator. If a value is missing, set it to null. Each JSON object must include: 'Primary Account', 'Name', 'SSN', 'DOB', 'Email', 'Home Phone', 'Work Phone', 'Status', and 'Balance'. Ensure only valid emails are entered under the 'Email' key, and valid phone numbers under the 'Home Phone' and 'Work Phone' keys, respectively.`;
+
+        // const prompt = "Include every detail in the invoice.";
+
+        let contents = [prompt];
+
+        const imageFiles = fs
+            .readdirSync("./output")
+            .filter((file) => file.endsWith(".png"));
+
+        imageFiles.forEach((filename) => {
+            const imagePath = `./output/${filename}`;
+            const base64Image = encodeImageToBase64(imagePath);
+            const imagePart = {
+                inlineData: {
+                    data: base64Image,
+                    mimeType: "image/png",
+                    detail: "high",
+                },
+            };
+            contents.push(imagePart);
+        });
+
+        const modelName = [
+            "gemini-2.5-pro-preview-05-06", // 0
+            "gemini-2.5-flash-preview-04-17", // 1
+            "gemini-2.0-flash", // 2
+            "gemini-2.0-flash-lite", // 3
+            "gemini-2.0-flash-thinking-exp-01-21", // 4
+            "gemini-2.0-flash-live-preview-04-09", // 5
+            "gemini-1.5-pro", // 6
+            "gemini-1.5-flash", // 7
+            "gemma-3-4b-it", // 8
+            "gemma-3-12b-it", // 9
+            "gemma-3-27b-it", // 10
+            "pali-gemma", // 11
+        ];
+
+        const model = modelName[2];
+
+        const result = await genAI.models.generateContent({
+            model: model,
+            config: {
+                // systemInstruction: system,
+                responseMimeType: "application/json",
+            },
+            contents: contents,
+        });
+
+        // for await (const chunk of result) {
+        //   process.stdout.write(chunk.text);
+        // }
+        console.log(`\n${result.text}\n`);
+
+        // const csv = parse(JSON.parse(result.text));
+        // fs.writeFileSync("./output/output.csv", csv);
+
+        const getUniqueFilename = () => {
+            const baseFilename = `./output/${model}_output`;
+            const extension = ".csv";
+            let counter = 1;
+            let filename = `${baseFilename}${extension}`;
+
+            while (fs.existsSync(filename)) {
+                counter++;
+                filename = `${baseFilename}_${counter}${extension}`;
+            }
+
+            return filename;
+        };
+
+        const outputFilename = getUniqueFilename();
+        const csv = parse(JSON.parse(result.text));
+        fs.writeFileSync(outputFilename, csv);
+        console.log(`CSV file written to: ${outputFilename}`);
+
+        imageFiles.forEach((filename) => {
+            const imagePath = `./output/${filename}`;
+            fs.unlinkSync(imagePath);
+        });
+        console.log("\nAll PNGs deleted\n");
+    } catch (error) {
+        console.error("Error generating content:", error);
     }
-
-    const imagePath = "src/vision/images/eleos-invoice-1.png";
-    const base64Image = encodeImageToBase64(imagePath);
-    const imagePart = {
-      inlineData: {
-        data: base64Image,
-        mimeType: "image/png",
-      },
-    };
-
-    const system =
-      "Only respond in single object. Your output will be converted to CSV, so maintain consistent keys across responses. identify handwritten correction (strikes) to the original values, and apply those adjustments.";
-
-    const prompt = "give all the details including the corrections";
-
-    let contents = [prompt];
-
-    const result = await genAI.models.generateContent({
-      model: "gemini-2.0-flash",
-      // model: "gemma-3-27b-it",
-      config: {
-        systemInstruction: system,
-        responseMimeType: "application/json",
-      },
-      contents: [prompt, imagePart],
-    });
-
-    // for await (const chunk of result) {
-    //   process.stdout.write(chunk.text);
-    // }
-    console.log(`\n${result.text}\n`);
-  } catch (error) {
-    console.error("Error generating content:", error);
-  }
 };
 
+// localModel_ls();
+// cloudModel_ls();
 cloudModel();
